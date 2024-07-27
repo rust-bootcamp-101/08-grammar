@@ -75,6 +75,7 @@ fn parse_bool(input: &mut &str) -> PResult<bool> {
     alt(("true", "false")).parse_to().parse_next(input)
 }
 
+// TODO: num parse doesn't work with scientific notation
 fn parse_number(input: &mut &str) -> PResult<Number> {
     let sign = opt("-").map(|s| s.is_some()).parse_next(input)?;
     let num = digit1.parse_to::<i64>().parse_next(input)?;
