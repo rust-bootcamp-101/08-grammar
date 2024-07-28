@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
 use winnow::{
-    ascii::{digit1, multispace0},
-    combinator::{alt, delimited, opt, separated, separated_pair, trace},
+    ascii::{float, multispace0},
+    combinator::{alt, delimited, separated, separated_pair, trace},
     error::{ContextError, ErrMode, ParserError},
     stream::{AsChar, Stream, StreamIsPartial},
     token::take_until,
@@ -15,7 +15,8 @@ use winnow::{
 enum JsonValue {
     Null,
     Bool(bool),
-    Number(Number),
+    // Number(Number),
+    Number(f64),
     String(String),
     Array(Vec<JsonValue>),
     Object(JsonObject),
@@ -23,11 +24,11 @@ enum JsonValue {
 
 type JsonObject = HashMap<String, JsonValue>;
 
-#[derive(Debug, Clone, PartialEq)]
-enum Number {
-    Int(i64),
-    Float(f64),
-}
+// #[derive(Debug, Clone, PartialEq)]
+// enum Number {
+//     Int(i64),
+//     Float(f64),
+// }
 
 fn main() -> Result<()> {
     let s = r#"{
@@ -75,27 +76,27 @@ fn parse_bool(input: &mut &str) -> PResult<bool> {
     alt(("true", "false")).parse_to().parse_next(input)
 }
 
-// TODO: num parse doesn't work with scientific notation, fix it
-fn parse_number(input: &mut &str) -> PResult<Number> {
-    let sign = opt("-").map(|s| s.is_some()).parse_next(input)?;
-    let num = digit1.parse_to::<i64>().parse_next(input)?;
-    let ret: Result<(), ErrMode<ContextError>> = ".".value(()).parse_next(input);
-    if ret.is_ok() {
-        let frac = digit1.parse_to::<i64>().parse_next(input)?;
-        let v = format!("{}.{}", num, frac).parse::<f64>().unwrap();
-        Ok(if sign {
-            Number::Float(-v)
-        } else {
-            Number::Float(v)
-        })
-    } else {
-        Ok(if sign {
-            Number::Int(-num)
-        } else {
-            Number::Int(num)
-        })
-    }
-}
+// // TODO: num parse doesn't work with scientific notation, fix it
+// fn parse_number(input: &mut &str) -> PResult<Number> {
+//     let sign = opt("-").map(|s| s.is_some()).parse_next(input)?;
+//     let num = digit1.parse_to::<i64>().parse_next(input)?;
+//     let ret: Result<(), ErrMode<ContextError>> = ".".value(()).parse_next(input);
+//     if ret.is_ok() {
+//         let frac = digit1.parse_to::<f64>().parse_next(input)?;
+//         let v = format!("{}.{}", num, frac).parse::<f64>().unwrap();
+//         Ok(if sign {
+//             Number::Float(-v)
+//         } else {
+//             Number::Float(v)
+//         })
+//     } else {
+//         Ok(if sign {
+//             Number::Int(-num)
+//         } else {
+//             Number::Int(num)
+//         })
+//     }
+// }
 
 fn parse_string(input: &mut &str) -> PResult<String> {
     let ret = delimited('"', take_until(0.., '"'), '"').parse_next(input)?;
@@ -124,7 +125,11 @@ fn parse_value(input: &mut &str) -> PResult<JsonValue> {
     alt((
         parse_null.value(JsonValue::Null),
         parse_bool.map(JsonValue::Bool),
-        parse_number.map(JsonValue::Number),
+        // parse_number.map(JsonValue::Number),
+
+        // 作业让json parser支持科学浮点计数 (1.1e-30)
+        // 直接使用内置的float函数解析，不使用自定义的判断integer和float64，只用f64这种类型
+        float.map(JsonValue::Number),
         parse_string.map(JsonValue::String),
         parse_array.map(JsonValue::Array),
         parse_object.map(JsonValue::Object),
@@ -172,23 +177,28 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_parse_number_should_work() -> PResult<(), ContextError> {
-        let input = "90";
-        let ret = parse_number(&mut (&*input))?;
-        assert_eq!(ret, Number::Int(90));
-        let input = "-89";
-        let ret = parse_number(&mut (&*input))?;
-        assert_eq!(ret, Number::Int(-89));
+    // #[test]
+    // fn test_parse_number_should_work() -> PResult<(), ContextError> {
+    //     let input = "90";
+    //     // let ret = parse_number(&mut (&*input))?;
+    //     assert_eq!(ret, 90);
+    //     // let input = "-89";
+    //     // let ret = parse_number(&mut (&*input))?;
+    //     // assert_eq!(ret, Number::Int(-89));
 
-        let input = "90.0";
-        let ret = parse_number(&mut (&*input))?;
-        assert_eq!(ret, Number::Float(90.0));
-        let input = "-89.1";
-        let ret = parse_number(&mut (&*input))?;
-        assert_eq!(ret, Number::Float(-89.1));
-        Ok(())
-    }
+    //     // let input = "90.0";
+    //     // let ret = parse_number(&mut (&*input))?;
+    //     // assert_eq!(ret, Number::Float(90.0));
+    //     // let input = "-89.1";
+    //     // let ret = parse_number(&mut (&*input))?;
+    //     // assert_eq!(ret, Number::Float(-89.1));
+
+    //     // let input = "1.234E+10";
+    //     // let ret = parse_number(&mut (&*input))?;
+    //     // assert_eq!(ret, Number::Float(1.234E+10));
+
+    //     Ok(())
+    // }
 
     #[test]
     fn test_parse_string_should_work() -> PResult<(), ContextError> {
@@ -201,14 +211,15 @@ mod tests {
 
     #[test]
     fn test_parse_array_should_work() -> PResult<(), ContextError> {
-        let input = r#" [ 1,2, -3 ]"#;
+        let input = r#" [ 1,2, -3, 1.1e-30 ]"#;
         let ret = parse_array(&mut (&*input))?;
         assert_eq!(
             ret,
             [
-                JsonValue::Number(Number::Int(1)),
-                JsonValue::Number(Number::Int(2)),
-                JsonValue::Number(Number::Int(-3))
+                JsonValue::Number(1f64),
+                JsonValue::Number(2f64),
+                JsonValue::Number(-3f64),
+                JsonValue::Number(1.1e-30)
             ]
         );
 
@@ -220,9 +231,7 @@ mod tests {
         let input = r#"{"a": 123 }"#;
         let ret = parse_object(&mut (&*input))?;
         assert_eq!(ret.len(), 1);
-        assert_eq!(ret.get("a"), Some(&JsonValue::Number(Number::Int(123))));
+        assert_eq!(ret.get("a"), Some(&JsonValue::Number(123f64)));
         Ok(())
     }
 }
-
-// TODO: 作业让json parser支持科学浮点计数 (1.1e-30)
