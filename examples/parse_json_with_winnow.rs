@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
 use winnow::{
-    ascii::{float, multispace0},
-    combinator::{alt, delimited, separated, separated_pair, trace},
+    ascii::{digit1, float, multispace0},
+    combinator::{alt, delimited, opt, separated, separated_pair, trace},
     error::{ContextError, ErrMode, ParserError},
     stream::{AsChar, Stream, StreamIsPartial},
     token::take_until,
@@ -15,8 +15,8 @@ use winnow::{
 enum JsonValue {
     Null,
     Bool(bool),
-    // Number(Number),
-    Number(f64),
+    Integer(i64),
+    Double(f64),
     String(String),
     Array(Vec<JsonValue>),
     Object(JsonObject),
@@ -98,6 +98,17 @@ fn parse_bool(input: &mut &str) -> PResult<bool> {
 //     }
 // }
 
+fn parse_integer(input: &mut &str) -> PResult<i64> {
+    let sign = opt("-").map(|s| s.is_some()).parse_next(input)?;
+    let num = digit1.parse_to::<i64>().parse_next(input)?;
+
+    let ret: Result<(), ErrMode<ContextError>> = ".".value(()).parse_next(input);
+    if ret.is_ok() {
+        return Err(ErrMode::Backtrack(ContextError::default()));
+    }
+    Ok(if sign { -num } else { num })
+}
+
 fn parse_string(input: &mut &str) -> PResult<String> {
     let ret = delimited('"', take_until(0.., '"'), '"').parse_next(input)?;
     Ok(ret.to_string())
@@ -125,11 +136,10 @@ fn parse_value(input: &mut &str) -> PResult<JsonValue> {
     alt((
         parse_null.value(JsonValue::Null),
         parse_bool.map(JsonValue::Bool),
-        // parse_number.map(JsonValue::Number),
-
+        parse_integer.map(JsonValue::Integer),
         // 作业让json parser支持科学浮点计数 (1.1e-30)
         // 直接使用内置的float函数解析，不使用自定义的判断integer和float64，只用f64这种类型
-        float.map(JsonValue::Number),
+        float.map(JsonValue::Double),
         parse_string.map(JsonValue::String),
         parse_array.map(JsonValue::Array),
         parse_object.map(JsonValue::Object),
@@ -177,28 +187,17 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_parse_number_should_work() -> PResult<(), ContextError> {
-    //     let input = "90";
-    //     // let ret = parse_number(&mut (&*input))?;
-    //     assert_eq!(ret, 90);
-    //     // let input = "-89";
-    //     // let ret = parse_number(&mut (&*input))?;
-    //     // assert_eq!(ret, Number::Int(-89));
+    #[test]
+    fn test_parse_integer_should_work() -> PResult<(), ContextError> {
+        let input = "90";
+        let ret = parse_integer(&mut (&*input))?;
+        assert_eq!(ret, 90);
+        let input = "-89";
+        let ret = parse_integer(&mut (&*input))?;
+        assert_eq!(ret, -89);
 
-    //     // let input = "90.0";
-    //     // let ret = parse_number(&mut (&*input))?;
-    //     // assert_eq!(ret, Number::Float(90.0));
-    //     // let input = "-89.1";
-    //     // let ret = parse_number(&mut (&*input))?;
-    //     // assert_eq!(ret, Number::Float(-89.1));
-
-    //     // let input = "1.234E+10";
-    //     // let ret = parse_number(&mut (&*input))?;
-    //     // assert_eq!(ret, Number::Float(1.234E+10));
-
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     #[test]
     fn test_parse_string_should_work() -> PResult<(), ContextError> {
@@ -211,18 +210,29 @@ mod tests {
 
     #[test]
     fn test_parse_array_should_work() -> PResult<(), ContextError> {
-        let input = r#" [ 1,2, -3, 1.1e-30 ]"#;
+        let input = r#" [ 1.0, 2.0, -3.0, 1.1e-30 ]"#;
         let ret = parse_array(&mut (&*input))?;
         assert_eq!(
             ret,
             [
-                JsonValue::Number(1f64),
-                JsonValue::Number(2f64),
-                JsonValue::Number(-3f64),
-                JsonValue::Number(1.1e-30)
+                JsonValue::Double(1f64),
+                JsonValue::Double(2f64),
+                JsonValue::Double(-3f64),
+                JsonValue::Double(1.1e-30)
             ]
         );
 
+        let input = r#" [ 1, 2, -3, 1 ]"#;
+        let ret = parse_array(&mut (&*input))?;
+        assert_eq!(
+            ret,
+            [
+                JsonValue::Integer(1),
+                JsonValue::Integer(2),
+                JsonValue::Integer(-3),
+                JsonValue::Integer(1)
+            ]
+        );
         Ok(())
     }
 
@@ -231,7 +241,7 @@ mod tests {
         let input = r#"{"a": 123 }"#;
         let ret = parse_object(&mut (&*input))?;
         assert_eq!(ret.len(), 1);
-        assert_eq!(ret.get("a"), Some(&JsonValue::Number(123f64)));
+        assert_eq!(ret.get("a"), Some(&JsonValue::Integer(123)));
         Ok(())
     }
 }
